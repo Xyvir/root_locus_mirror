@@ -1,0 +1,1256 @@
+'use strict';
+// This code is currently uncommented - check back later for comments.
+
+var RLO; // Root Locus Draw Object
+
+function myDebug(x) {
+  console.log(x);
+}
+
+// Create Root Locus Draw Object
+function RLO_Obj() {
+  this.num = ''; // Numerator polynomial (nerdamer)
+  this.den = ''; // Denominator polynomial (nerdamer)
+  this.NStr = ''; // TeX string for numerator
+  this.DStr = ''; // TeX string for denominator
+  this.K = ''; // Value of K
+  this.zeros = ''; // Array holding zeros
+  this.poles = ''; // Array holding poles
+  this.zRepeat = false; // true if there are repeated zeros  
+  this.pRepeat = false; // true if there are repeated poles
+  this.n = 0; // number of poles
+  this.m = 0;
+  this.q = 0; // q = n-m
+  this.prec = 3; // precision for rounding
+  this.locus = ''; // a multidimensional array holding root locus
+  this.RLchart = '';
+  this.colors = ['rgb(0,114,189)', // Start with "MATLAB" colors
+    'rgb(217,83,25)',
+    'rgb(237,177,32)',
+    'rgb(126,47,142)',
+    'rgb(119,172,148)',
+    'rgb(77,190,238)',
+    'rgb(162,20,47)',
+    'rgb(255,0,0)', // then add primary and secondary
+    'rgb(0,255,0)',
+    'rgb(0,0,255)',
+    'rgb(255,255,0)',
+    'rgb(0,255,255)',
+    'rgb(255,0,255)'
+  ];
+  this.xLim = [];
+  this.yLim = [];
+  this.kBreakOut = '';
+  this.KMax = '';
+  this.thickLine = 6; // line width for thick line
+  this.pink = 'rgba(255,0,255,0.4)';
+  this.KCross = -1; // if > 0 this is K value at imag axis crossing.
+  // if == -1, no crossing is found yet
+  // if == -2, locus is along imag axis
+  this.wCross = -1;
+};
+
+
+// Reset function
+$(function () {
+
+  $("input[name$='explainRadio'").click(function () {
+    showExplanation($(this).val());
+  });
+  $("div.explain").hide();
+  $("#onlyLocusDiv").show();
+
+  $("input[name$='zoomRadio'").click(function () {
+    zoomPlot($(this).val());
+  });
+
+  let numStr = getParameterByName('n');
+  let denStr = getParameterByName('d');
+  if (numStr != null) {
+    $('#N_of_s').val(numStr);
+  }
+  if (denStr != null) {
+    $('#D_of_s').val(denStr);
+  }
+
+  RLOupdate();
+});
+
+function RLOupdate() { // function called when polynomial is changed.
+  RLO = new RLO_Obj(); // Create object.
+
+  getTerms();
+
+  dispInfo();
+  breakoutExplain();
+  calcLocus();
+
+  $('#onlyLocus').prop('checked', true);
+  showExplanation('onlyLocusDiv');
+}
+
+
+/* This function 
+ * grabs the text from the html page, 
+ * forms the transfer function,
+ * factors numerator and denominator,
+ */
+function getTerms() {
+  // Pull info from web page
+  // **TODO** take other forms of input like 10(s+100)/((s+10)(s^2+s+1))
+  let KStr = $('#multConst').val();
+  let NStr = $('#N_of_s').val();
+  let DStr = $('#D_of_s').val();
+  let poly = nerdamer(NStr); // Get numerator in proper form
+  poly = nerdamer.expand(poly);
+  RLO.NStr = poly.toTeX();
+  RLO.num = poly;
+
+  poly = nerdamer(DStr); // Get denominator in proper form
+  poly = nerdamer.expand(poly);
+  RLO.DStr = poly.toTeX();
+  RLO.den = poly;
+
+  RLO.K = parseFloat(KStr);
+
+  let numOrd = nerdamer.deg(RLO.num).valueOf();
+  let denOrd = nerdamer.deg(RLO.den).valueOf();
+
+  let highNumCoeff = nerdamer.vecget(nerdamer.coeffs(RLO.num, 's'), numOrd).valueOf();
+  let highDenCoeff = nerdamer.vecget(nerdamer.coeffs(RLO.den, 's'), denOrd).valueOf();
+  if ((highNumCoeff < 0) || (highDenCoeff < 0) || (numOrd > denOrd)) {
+    document.getElementById('restrictionsOnSystems').style.display = 'block';
+  } else {
+    document.getElementById('restrictionsOnSystems').style.display = 'none';
+  }
+
+  let zeros = numOrd == 0 ? [] : nerdamer.roots(RLO.num);
+  let poles = nerdamer.roots(RLO.den);
+
+  RLO.zeros = roundToPrec(zeros, numOrd); // changes zeros from Nerdamer to complex
+  RLO.zeros.sort(function (a, b) {
+    return a.re - b.re
+  })
+  RLO.m = numOrd;
+  RLO.zRepeat = false;
+  for (let i = 0; i < numOrd - 1; i++) {
+    if (RLO.zeros[i].equals(RLO.zeros[i + 1])) {
+      RLO.zRepeat = true;
+      break;
+    }
+
+  }
+
+  RLO.poles = roundToPrec(poles, denOrd);
+  RLO.poles.sort(function (a, b) {
+    return a.re - b.re
+  })
+  RLO.n = denOrd;
+  RLO.pRepeat = false;
+  for (let i = 0; i < denOrd - 1; i++) {
+    if (RLO.poles[i].equals(RLO.poles[i + 1])) {
+      RLO.pRepeat = true;
+      break;
+    }
+  }
+
+  RLO.q = RLO.n - RLO.m;
+
+  // Go through all poles and zeros and find max and min (for autoscale)
+  let xLeft = -1;
+  let xRight = 1;
+  let yTop = 1;
+  for (let i = 0; i < RLO.n; i++) {
+    xLeft = RLO.poles[i].re < xLeft ? RLO.poles[i].re : xLeft;
+    xRight = RLO.poles[i].re > xRight ? RLO.poles[i].re : xRight;
+    yTop = RLO.poles[i].im > yTop ? RLO.poles[i].im : yTop;
+  }
+  for (let i = 0; i < RLO.m; i++) {
+    xLeft = RLO.zeros[i].re < xLeft ? RLO.zeros[i].re : xLeft;
+    xRight = RLO.zeros[i].re > xRight ? RLO.zeros[i].re : xRight;
+    yTop = RLO.zeros[i].im > yTop ? RLO.zeros[i].im : yTop;
+  }
+  // if y value is larger, change xLeft;
+  xLeft = yTop > -xLeft ? -yTop : xLeft;
+  xLeft = Math.floor(xLeft + 0.01); // round down to integer (add small number
+  // to offset any numerical imprecision)
+  xRight = Math.ceil(xRight - 0.01);
+
+  RLO.xLim = [xLeft * 3, xRight * 2];
+  yTop = (RLO.xLim[1] - RLO.xLim[0]) / 2;
+  RLO.yLim = [-yTop, yTop];
+
+}
+
+// Display information about transfer function.
+function dispInfo() {
+  myDebug('dispInfo')
+  let LG_S = `$G(s) \\cdot H(s) = \\frac{N(s)}{D(s)} = \\frac{${RLO.NStr}}{${RLO.DStr}}$`;
+  $('#LG').html(LG_S);
+  $('#LG2').html(LG_S);
+
+  let CE_K_S = `\\[D(s) + K \\cdot N(s) = ${RLO.DStr} + K \\left( ${RLO.NStr} \\right)= 0\\]`
+  $('#CE_K').html(CE_K_S);
+
+  let TFinfoStr = `<ul><li>The numerator polynomial has  ${RLO.m ? RLO.m + ' zero(s) at s = ' + termsStr(RLO.zeros) : 'no zeros'}
+            ${RLO.zRepeat?'(some of the zeros are repeated)':''}.</li>
+            <li>The denominator polynomial yields n = ${RLO.n} pole(s) at s = ${termsStr(RLO.poles)} 
+            ${RLO.pRepeat?' (some of the poles are repeated)':''}.  Therefore there are ${RLO.n} 
+            branches to the locus.</li>
+            <li>There exist q = n - m = ${RLO.n} - ${RLO.m} = ${RLO.q} closed loop pole(s) as K&rarr;&infin;,  
+            |s|&rarr;&infin;.</li></ul>`
+
+  // let TFinfoStr = `<ul><li>The numerator polynomial has m = ${RLO.m} zero(s) at s = ${termsStr(RLO.zeros)}
+  //           ${RLO.zRepeat?' (some of the zeros are repeated)':''}.</li>
+  //           <li>The denominator polynomial yields n = ${RLO.n} pole(s) at s = ${termsStr(RLO.poles)} 
+  //           ${RLO.pRepeat?' (some of the poles are repeated)':''}.  Therefore there are ${RLO.n} 
+  //           branches to the locus.</li>
+  //           <li>There exist q = n - m = ${RLO.n} - ${RLO.m} = ${RLO.q} closed loop pole(s) as K&rarr;&infin;,  
+  //           |s|&rarr;&infin;.</li></ul>`
+  $('#TFinfo').html(TFinfoStr);
+
+  RLO.RLchart = makeRLchart("RLPlotStart");
+
+  if (RLO.pRepeat || RLO.zRepeat) {
+    RLO.RLchart.setTitle({
+      text: 'Root Locus, some poles/zeros are repeated'
+    })
+  } else {
+    RLO.RLchart.setTitle({
+      text: 'Root Locus of G(s)H(s)'
+    })
+  }
+
+  zoomPlot('NoZoom');
+  // Draw axes
+  RLO.RLchart.get('xAxis').setData([
+    [RLO.xLim[0] * 3, 0],
+    [RLO.xLim[1] * 3, 0]
+  ]);
+  RLO.RLchart.get('yAxis').setData([
+    [0, RLO.yLim[0] * 3],
+    [0, RLO.yLim[1] * 3]
+  ]);
+
+  // Create an array with the poles of open loop TF (i.e., starting points)
+  let d = [];
+  for (let i = 0; i < RLO.poles.length; i++) {
+    d.push([RLO.poles[i].re, RLO.poles[i].im]);
+  }
+  RLO.RLchart.get('poles').setData(d, true, false, false);
+
+  // Create an array with the zeros of open loop TF (i.e., ending points)
+  d = [];
+  for (let i = 0; i < RLO.zeros.length; i++) {
+    d.push([RLO.zeros[i].re, RLO.zeros[i].im]);
+  }
+  RLO.RLchart.get('zeros').setData(d, true, false, false);
+}
+
+function showExplanation(topic) {
+  myDebug('showExplanation');
+  $("div.explain").hide();
+  $("#" + topic).show();
+
+  RLO.RLchart.get('showRoots').update({
+    visible: false
+  });
+
+  RLO.RLchart.get('showPoint').update({
+    visible: false
+  });
+
+  let i = 0;
+  while (RLO.RLchart.get('pinkLine' + i) != undefined) {
+    RLO.RLchart.get('pinkLine' + i).remove();
+    i++;
+  }
+
+  i = 0;
+  while (RLO.RLchart.get('anglePlot' + i) != undefined) {
+    RLO.RLchart.get('anglePlot' + i).remove();
+    i++;
+  }
+
+  $('#RLPlotStart').off('click');
+
+  switch (topic) {
+    case 'onlyLocusDiv':
+      break;
+    case 'startPtDiv':
+      kValExplain(0);
+      break;
+    case 'stopPtDiv':
+      kValExplain(Infinity);
+      break;
+    case 'realAxisDiv':
+      realAxisExplain();
+      break;
+    case 'asymptotesDiv':
+      asymptoteExplain();
+      break;
+    case 'breakOutDiv':
+      breakoutExplain();
+      break;
+    case 'departAngleDiv':
+      departAngleExplain();
+      break;
+    case 'arriveAngleDiv':
+      arriveAngleExplain();
+      break;
+    case 'crossImagAxisDiv':
+      crossImagAxisExplain();
+      break;
+    case 'chooseKDiv':
+      kValExplain(0);
+      break;
+    case 'getKfromPoleDiv':
+      $('#RLPlotStart').on('click', function (e) {
+        let chart = $(this).highcharts();
+        e = chart.pointer.normalize(e);
+        let inChart = chart.isInsidePlot(e.chartX - chart.plotLeft, e.chartY - chart.plotTop);
+        if (inChart) {
+          let x = chart.xAxis[0].toValue(e.chartX);
+          let y = chart.yAxis[0].toValue(e.chartY);
+          getKfromPoleExplain(x, y);
+        }
+      });
+      break;
+    default:
+      myDebug('Invalid option in showExplanation().');
+  }
+  MathJax.Hub.Queue(["Typeset", MathJax.Hub]);
+}
+
+function zoomPlot(zoomLevel) {
+  $('#ZoomIn').attr("disabled", false);
+  $('#ZoomOut').attr("disabled", false);
+  $('#NoZoom').attr("disabled", false);
+  $('#' + zoomLevel).attr("disabled", true);
+  $('#' + zoomLevel).prop("checked", true);
+  let scale = 3;
+  switch (zoomLevel) {
+    case 'ZoomIn':
+      scale = 1 / scale; // decrease axis limits.
+      break;
+    case 'ZoomOut':
+      break;
+    default:
+      scale = 1;
+  }
+
+  RLO.RLchart.xAxis[0].setExtremes(RLO.xLim[0] * scale, RLO.xLim[1] * scale);
+  RLO.RLchart.yAxis[0].setExtremes(RLO.yLim[0] * scale, RLO.yLim[1] * scale);
+}
+
+function kValExplain(K) {
+  let hText = RLO.q == 0 ? `` : `<br>Since q = n - m = ${RLO.q}, there are ${RLO.q}
+    roots with stopping points where |s|&rarr;&infin;.`;
+  $('#startStopInfinity').html(hText);
+
+  hText = '';
+  let r = [];
+  if (K == 0) {
+    r = RLO.poles;
+    hText = `The characteristic equation is
+            \\[  1+K \\cdot \\frac{N(s)}{D(s)} = 0.\\]
+            As K&rarr;0, this equation can only be true if D(s)&rarr;0 as well, 
+            in other words, at the poles of the loop gain.`
+  } else if (K == Infinity) {
+    r = RLO.zeros;
+    hText = `The characteristic equation is
+            \\[  1+K \\cdot \\frac{N(s)}{D(s)} = 0.\\]
+            As K&rarr;&infin;, this equation can only be true if s is finite if N(s)&rarr;0 as well, 
+            in other words, at the zeros of the loop gain.`
+  } else {
+    let ce = RLO.den.add(RLO.num.multiply(K)).expand();
+    r = roundToPrec(nerdamer.roots(ce), RLO.n);
+    hText = `The characteristic equation is
+            \\[1+K \\cdot G(s) \\cdot H(s) = 0 \\textrm{, or } 1+K \\cdot \\frac{N(s)}{D(s)} = 0,\\]
+            \\[D(s) + K \\cdot N(s) = ${RLO.DStr} + K \\left( ${RLO.NStr} \\right)= 0\\] 
+            with K = ${K} this is
+            \\[${RLO.DStr} + ${K} \\left( ${RLO.NStr} \\right)  = ${ce.toTeX('decimal')} = 0\\]
+            This has roots at s = ${termsStr(r)}.  These are shown as pink diamonds on the graph.`
+  }
+
+  $('#kValExplain').html(hText);
+  if (K == 0) {
+    $('#kValExplainZero').html(hText);
+  }
+  if (K == Infinity) {
+    $('#kValExplainInf').html(hText);
+  }
+
+
+  let d = [];
+  for (let i = 0; i < r.length; i++) {
+    d[i] = r[i].toVector();
+  }
+  RLO.RLchart.get('showRoots').setData(d, true, false, false);
+  RLO.RLchart.get('showRoots').update({
+    visible: true
+  });
+  MathJax.Hub.Queue(["Typeset", MathJax.Hub], "kValExplain");
+}
+
+function realAxisExplain() {
+  let rCmplx = []; // gather real poles and zeros in array
+  for (let i = 0; i < RLO.n; i++) {
+    if (RLO.poles[i].im == 0) {
+      rCmplx.push(RLO.poles[i]);
+    }
+  }
+
+  for (let i = 0; i < RLO.m; i++) {
+    if (RLO.zeros[i].im == 0) {
+      rCmplx.push(RLO.zeros[i]);
+    }
+  }
+
+  rCmplx.sort((a, b) => b.re - a.re);
+  let numPts = rCmplx.length;
+  let d = [];
+  for (let i = 0; i < numPts; i++) {
+    d.push([parseFloat(rCmplx[i].re), 0]);
+  }
+  RLO.RLchart.get('showRoots').setData(d, true, false, false);
+  RLO.RLchart.get('showRoots').update({
+    visible: true
+  });
+
+  let hText = `${RLO.pRepeat||RLO.zRepeat ? 'Note: some poles and zeros of G(s) H(s) are repeated.<br>': ''}`
+  if (numPts == 0) {
+    hText = `${hText}There are no poles and zeros on the real axis, so locus doesn't exist along real axis. `;
+  } else {
+    hText = `${hText}There are poles and zeros on the real axis at ${termsStr(rCmplx)}. The locus
+        is on the axis `
+    let i = 0;
+    while (i < numPts) {
+      let ri = parseFloat(rCmplx[i].re); // r[i]
+
+      if (i == rCmplx.length - 1) {
+        hText = `${hText} from ${ri} to -&infin;.`;
+        d = [
+          [RLO.xLim[0] * 5, 0],
+          [ri, 0]
+        ];
+      } else {
+        let rip1 = parseFloat(rCmplx[i + 1].re); // r[i+1]
+        d = [
+          [rip1, 0],
+          [ri, 0]
+        ];
+        hText = `${hText} from ${ri} to ${rip1}`;
+        if (i < rCmplx.length - 2) {
+          hText = `${hText}, and`;
+        } else {
+          hText = `${hText}.`;
+        }
+      }
+      RLO.RLchart.addSeries({
+        name: 'pinkLine' + i / 2,
+        id: 'pinkLine' + i / 2,
+        data: d,
+        color: RLO.pink,
+        lineWidth: RLO.thickLine
+      });
+      i = i + 2;
+    }
+  }
+  $('#realAxisText').html(hText);
+}
+
+function asymptoteExplain() {
+  let complexPairs = false;
+  let angles = '';
+  for (let i = 1; i < RLO.q + 1; i += 2) {
+    angles = `${angles}&plusmn;${i*180/RLO.q}&deg, `
+  }
+  angles = angles.substr(0, angles.length - 2); // remove last comma
+  let sumPoles = 0;
+  for (let i = 0; i < RLO.n; i++) {
+    sumPoles += parseFloat(RLO.poles[i].re);
+    complexPairs = (RLO.poles[i].im == 0) ? complexPairs : true;
+  }
+  let sumZeros = 0;
+  for (let i = 0; i < RLO.m; i++) {
+    sumZeros += parseFloat(RLO.zeros[i].re);
+    complexPairs = (RLO.zeros[i].im == 0) ? complexPairs : true;
+  }
+  let sigmaA = parseFloat(((sumPoles - sumZeros) / RLO.q).toPrecision(RLO.prec));
+  sumPoles = sumPoles.toPrecision(RLO.prec);
+  sumZeros = sumZeros.toPrecision(RLO.prec);
+
+  let hTxt = `In the loop transfer function, G(s)H(s) we have
+    n=${RLO.n} poles and m=${RLO.m} finite zeros, so we have 
+    q&nbsp;=&nbsp;n&nbsp;-&nbsp;m&nbsp;=&nbsp;${RLO.q} zeros as 
+    s&rarr;&infin;. <br>`
+  if (RLO.q > 0) {
+    hTxt = `${hTxt} Angle of asymptotes are at odd multiples of &plusmn;180&deg;/q 
+    (i.e ${angles} in this case) <br>
+    The poles of the loop gain (${termsStr(RLO.poles)}) sum to &Sigma;<sub>p</sub>=${sumPoles}. <br>
+    The zeros of the loop gain (${termsStr(RLO.zeros)}) sum to &Sigma;<sub>z</sub>=${sumZeros}. <br>
+    ${complexPairs ? '<span class="note">(For any complex conjugate pairs, the imaginary ' +
+    'parts cancel out, and the real part is double since there is a pair).</span><br>':''}
+    The intersect of the asymptotes, &sigma;<sub>a</sub>=(&Sigma;<sub>p</sub>-&Sigma;<sub>z</sub>)/q = 
+    ${sigmaA}.<br>The intersect is shown with a pink diamond, the asymptote(s) by a pink line.
+    ${RLO.q==1?'<br><span class="note">Since q=1 there is a single asymptote at &plusmn;180&deg; '+
+    'that lies on the real axis to the left of &sigma;<sub>a</sub>.</span>':''}`;
+  }
+  $('#asymptotesText').html(hTxt);
+
+  RLO.RLchart.get('showRoots').setData([
+    [sigmaA, 0]
+  ], true, false, false);
+  RLO.RLchart.get('showRoots').update({
+    visible: true
+  });
+
+  let r = 4 * (RLO.xLim[1] - RLO.xLim[0]);
+
+  for (let i = 0; i < RLO.q; i++) {
+    let theta = Math.PI * (2 * i + 1) / RLO.q;
+    let dx = r * Math.cos(theta);
+    let dy = r * Math.sin(theta);
+    RLO.RLchart.addSeries({
+      name: 'pinkLine' + i,
+      id: 'pinkLine' + i,
+      type: 'scatter',
+      data: [
+        [sigmaA, 0],
+        [sigmaA + dx, dy]
+      ],
+      color: RLO.pink,
+      lineWidth: RLO.thickLine
+    });
+
+  }
+
+
+}
+
+function breakoutExplain() {
+  myDebug('breakoutExplain');
+  let kVals = []; // used below
+
+  let np = nerdamer.diff(RLO.num, 's');
+  let dp = nerdamer.diff(RLO.den, 's');
+  let ndp_npd = RLO.num.multiply(dp).subtract(RLO.den.multiply(np)).expand();
+
+  let hTxt = `Break-Out (or -In) points occur where N(s)D'(s) - N'(s)D(s) = 0, or 
+  $${ndp_npd.toTeX()}=0$. (details below). <br>`;
+
+  let nroots = nerdamer.deg(ndp_npd);
+  if (nroots.valueOf() == 0) {
+    hTxt = `${hTxt} Clearly this is never true, therefore there are no breakaway points.`
+  } else {
+    let nerdRoots = nerdamer.roots(ndp_npd);
+    var baRoots = roundToPrec(nerdRoots, nroots); // changes roots from Nerdamer to complex
+    var baRootsOnLocus = [];
+    for (let i = 0; i < baRoots.length; i++) { // go through all possible roots
+      if (baRoots[i].im == 0) { // if on the real axis, find the value of k at the breakaway
+        // We have to do a special case if the breakaway is at a zero.
+        let numVal = RLO.num.sub('s', baRoots[i]).valueOf();
+        let k = Infinity; // k= Infinity if numVal is zero.
+        if (numVal != 0) {
+          k = -(RLO.den.divide(numVal)).sub('s', baRoots[i]).valueOf();
+        }
+        if (k >= 0) {
+          kVals.push(k);
+          baRootsOnLocus.push(baRoots[i]);
+        }
+      }
+    }
+    hTxt = `${hTxt} This polynomial has ${nroots} roots at s = ${termsStr(baRoots)}.<br>
+    From these ${nroots} roots, there exist ${kVals.length} roots on the locus
+    ${kVals.length > 0 ? ' at s = ' + termsStr(baRootsOnLocus) +  
+    ', these are highlighted on the diagram above with pink diamonds.' :
+    ', so none are shown'}`;
+
+    let d = [];
+    for (let i = 0; i < baRootsOnLocus.length; i++) {
+      d.push(baRootsOnLocus[i].toVector());
+    }
+    RLO.RLchart.get('showRoots').setData(d, true, false, false);
+    RLO.RLchart.get('showRoots').update({
+      visible: true
+    });
+  }
+
+  hTxt = `${hTxt} <br><br>N(s) and D(s) are numerator and denominator polylnomials 
+            of G(s)H(s), and the tick mark, ', denotes differentiation.<br>
+            N(s) = $${RLO.num.toTeX()}$, &nbsp; &nbsp;N'(s) = $${np.toTeX()}$<br>
+            D(s)= $${RLO.den.toTeX()}$, &nbsp; &nbsp;D'(s)= $${dp.toTeX()}$<br>
+            N(s)D'(s)-N'(s)D(s)= $${ndp_npd.toTeX()}$<br><br>
+
+            Here we used N(s)D'(s)-N'(s)D(s)=0, but we could use N'(s)D(s)-N(s)D'(s)=0.`
+  $('#breakOutText').html(hTxt);
+
+  kVals.push(Infinity); // add a very large number at end
+  RLO.kBreakOut = kVals.sort();
+}
+
+function departAngleExplain() {
+  let hText = '';
+  let depPole;
+  let depIndx;
+  let cnt = 0;
+  for (let i = 0; i < RLO.n; i++) {
+    if (RLO.poles[i].im > 0) {
+      depPole = RLO.poles[i];
+      depIndx = i;
+      break;
+    }
+  }
+
+  if (depPole == undefined) {
+    hText = 'G(s)H(s) has no complex poles, so there are no angles of departure';
+  } else {
+    hText = `We will find the angle of departure of the locus from the pole at
+    (${cmplx_j(depPole)}) which is marked by a pink diamond.<br>
+    Angles between this pole and other poles are shown as blue/purple arcs.<br>
+    Angles between this pole and zeros are shown as green/cyan arcs.<br>
+    The angle of departure is shown as a pink arc.<br><br> <ul>`
+
+    let depAngle = 180;
+
+    for (let i = 0; i < RLO.m; i++) {
+      let str = drawAngle('pole', depPole, 'zero', RLO.zeros[i], 'rgba(0,255,0,0.5)', cnt++);
+      depAngle += depPole.sub(RLO.zeros[i]).arg() * 180 / Math.PI;
+      hText = `${hText} <li>${str}</li>`;
+    }
+
+    for (let i = 0; i < RLO.n; i++) {
+      if (i != depIndx) {
+        let str = drawAngle('pole', depPole, 'pole', RLO.poles[i], 'rgba(0,0,255,0.3)', cnt++);
+        depAngle -= depPole.sub(RLO.poles[i]).arg() * 180 / Math.PI;
+        hText = `${hText} <li>${str}</li>`;
+      }
+    }
+
+    let V = Complex({
+      phi: depAngle * Math.PI / 180,
+      r: (RLO.xLim[1] - RLO.xLim[0]) / 5
+    });
+    drawAngle('pole', depPole.add(V), 'pole', depPole, RLO.pink, cnt++);
+
+    hText = `${hText}</ul><br> The angle of departure from the pole at ${cmplx_j(depPole)}
+      is <br> 180&deg; + &Sigma;(angles to zeros) - &Sigma;(angles to poles) = 
+      ${depAngle.toPrecision(RLO.prec)}&deg.`;
+
+    RLO.RLchart.get('showRoots').setData([
+      [depPole.re, depPole.im]
+    ], true, false, false);
+    RLO.RLchart.get('showRoots').update({
+      visible: true
+    });
+  }
+  $('#departAngleText').html(hText);
+}
+
+function arriveAngleExplain() {
+  let hText = '';
+  let arrZero;
+  let arrIndx;
+  let cnt = 0;
+  for (let i = 0; i < RLO.m; i++) { // look for a complex zero
+    if (RLO.zeros[i].im > 0) {
+      arrZero = RLO.zeros[i];
+      arrIndx = i;
+      break;
+    }
+  }
+
+  if (arrZero == undefined) {
+    hText = 'G(s)H(s) has no complex zeros, so there are no angles of arrival';
+  } else {
+    hText = `We will find the angle of arrival of the locus to the zero at
+    (${cmplx_j(arrZero)}) which is marked by a pink diamond.<br>
+    Angles between this zero and  poles are shown as blue arcs.<br>
+    Angles between this zero and other zeros are shown as green arcs.<br>
+    The angle of arrival is shown as a pink arc.<br><br> <ul>`
+
+    let arrAngle = 180;
+
+    for (let i = 0; i < RLO.n; i++) {
+      let str = drawAngle('zero', arrZero, 'pole', RLO.poles[i], 'rgba(0,0,255,0.3)', cnt++);
+      arrAngle += arrZero.sub(RLO.poles[i]).arg() * 180 / Math.PI;
+      hText = `${hText} <li>${str}</li>`;
+    }
+
+    for (let i = 0; i < RLO.m; i++) {
+      if (i != arrIndx) {
+        let str = drawAngle('zero', arrZero, 'zero', RLO.zeros[i], 'rgba(0,255,0,0.5)', cnt++);
+        arrAngle -= arrZero.sub(RLO.zeros[i]).arg() * 180 / Math.PI;
+        hText = `${hText} <li>${str}</li>`;
+      }
+    }
+
+    let V = Complex({
+      phi: arrAngle * Math.PI / 180,
+      r: (RLO.xLim[1] - RLO.xLim[0]) / 5
+    });
+    drawAngle('zero', arrZero.add(V), 'zero', arrZero, RLO.pink, cnt++);
+
+    hText = `${hText}</ul><br> The angle of arrival from the zero at ${cmplx_j(arrZero)}
+      is <br> 180&deg; - &Sigma;(angles to zeros) + &Sigma;(angles to poles) = 
+      ${arrAngle.toPrecision(RLO.prec)}&deg.`;
+
+    RLO.RLchart.get('showRoots').setData([
+      [arrZero.re, arrZero.im]
+    ], true, false, false);
+    RLO.RLchart.get('showRoots').update({
+      visible: true
+    });
+  }
+  $('#arriveAngleText').html(hText);
+}
+
+function crossImagAxisExplain() {
+  let hText = `This code only checks for crossings of the imaginary axis that are not also
+    on the real axis (i.e., it doesn't check for a crossing through the origin).<br>`
+
+  if (RLO.KCross == -1) {
+    hText = `${hText}There are no such crossings for this root locus.`
+  } else if (RLO.KCross == -2) {
+    hText = `${hText}In this case the locus runs along the imaginary axis, 
+      but doesn't cross it in the standard sense.`
+  } else {
+    hText = `${hText}The locus crosses the imaginary axis when K = ${RLO.KCross}, at 
+        &plusmn;<em>j</em>&omega; = &plusmn;<em>j</em>${RLO.wCross}.  These points
+        are depicted by pink diamonds.<br><br>
+        The value of K is normally determined by using Routh's method; this program finds
+        it numerically, and so its value may be slightly different than the exact value.
+        <br>If there is more than one crossing, only one is shown.`;
+
+    RLO.RLchart.get('showRoots').setData([
+      [0, RLO.wCross],
+      [0, -RLO.wCross]
+    ], true, false, false);
+    RLO.RLchart.get('showRoots').update({
+      visible: true
+    });
+  }
+
+  $('#crossImagAxisText').html(hText);
+}
+
+function getKfromPoleExplain(x, y) {
+  myDebug('getKfromPoleExplain');
+  // let sVal = x.toPrecision(RLO.prec) + '+' + y.toPrecision(RLO.prec) + '*sqrt(-1)';
+  let sVal = x.toPrecision(RLO.prec) + '+' + y.toPrecision(RLO.prec) + 'i';
+
+  // These next 4 lines are a kluge, I couldn't figure out how to do complex division in nerdamer
+  let dVal = RLO.den.sub('s', sVal).expand().text().replace('*', '');
+  let nVal = RLO.num.sub('s', sVal).expand().text().replace('*', '');
+
+  let KComplex = Complex(dVal).neg().div(Complex(nVal));
+  KComplex = Complex(KComplex.re.toPrecision(RLO.prec), KComplex.im.toPrecision(RLO.prec));
+
+  let K = parseFloat(KComplex.re);
+  let Kneg = K < 0; // Is K negative?  If so set it to zero.  We also need to know if K was neg later.
+  K = Kneg ? 0 : K;
+
+  // Find closed loop pole locations, and show them
+  let ce = RLO.den.add(RLO.num.multiply(K)).expand();
+  let r = roundToPrec(nerdamer.roots(ce), RLO.n);
+  let d = [];
+  for (let i = 0; i < r.length; i++) {
+    d[i] = r[i].toVector();
+  }
+  RLO.RLchart.get('showRoots').setData(d, true, false, false);
+  RLO.RLchart.get('showRoots').update({
+    visible: true
+  });
+
+  // Show selected value.
+  RLO.RLchart.get('showPoint').setData([
+    [x, y]
+  ], true, false, false);
+  RLO.RLchart.get('showPoint').update({
+    visible: true
+  });
+
+  let hText = `Chosen point is s = ${x.toPrecision(RLO.prec)} + j${y.toPrecision(RLO.prec)} 
+    and is shown as a green cross on the plot. 
+    Since $1+K\\frac{N(s)}{D(s)}=0$, we use this value of "s" in $K=-\\frac{D(s)}{N(s)}$, so
+    \\[K= -\\frac{${RLO.DStr}}{${RLO.NStr}}=${KComplex}\\]
+    If the point chosen is not precisely on the locus, the value of K will be complex.
+    ${Kneg ? ' Since the chosen value of K had negative real part, it is set (arbitrarily) to zero' : 
+    ' We take the real part of the calculated value'}, so K=${K}.  
+    We use this value to find the location of the pole on the locus (using  
+    technique from the rule <em>"Starting and Stopping Points"</em>, above).<br>
+    These pole locations are shown as pink diamonds at s = ${termsStr(r)}.
+    <br><br> Click on another point to select new pole, or choose different rule.`;
+
+  $('#getKfromPoleText').html(hText);
+  MathJax.Hub.Queue(["Typeset", MathJax.Hub]);
+}
+
+function drawAngle(from, s1, to, s2, c, cnt) { // draw an angle - used for departure and arrival angles.
+  let s1Ms2 = s1.sub(s2);
+  let theta = s1Ms2.arg();
+  let angle = (theta * 180 / Math.PI).toPrecision(RLO.prec);
+  let R = s1Ms2.abs();
+  let r = R * 0.25;
+  s1Ms2 = Complex(s1Ms2.re.toPrecision(RLO.prec), s1Ms2.im.toPrecision(RLO.prec))
+
+  let myStr = `<strong>${to} at ${cmplx_j(s2)}</strong>: the  
+  ${from=='pole'? 'departing pole' : 'arriving zero'}, at (${cmplx_j(s1)}),
+   minus this ${to}, (${cmplx_j(s2)}), is equal to ${cmplx_j(s1Ms2)}.<br>
+   The angle between them is &ang;(${cmplx_j(s1Ms2)}) = ${angle}&deg;.`
+
+  let x0 = s2.re;
+  let y0 = s2.im;
+  let x1 = s1.re;
+  let y1 = s1.im;
+
+  let p = [
+    [x0, y0],
+    [x0 + R, y0],
+    [x0 + r, y0],
+  ];
+  for (let th = 0; th < Math.abs(theta); th += 0.2) {
+    let thet = th * Math.sign(theta);
+    p.push([x0 + r * Math.cos(thet), y0 + r * Math.sin(thet)]);
+  }
+
+  p.push([x0 + r * Math.cos(theta), y0 + r * Math.sin(theta)]);
+  p.push([x1, y1]);
+  p.push([x0, y0]);
+
+  RLO.RLchart.addSeries({
+    name: 'anglePlot' + cnt,
+    id: 'anglePlot' + cnt,
+    type: 'polygon',
+    data: p,
+    color: c,
+    dashStyle: 'dot',
+    lineWidth: 2
+  });
+  return (myStr);
+}
+
+function cmplx_j(z) { // get complex number, but replace i with j
+  return z.toString().replace('i', 'j');
+}
+
+function calcLocus() {
+  myDebug('calcLocus');
+  let dK = 0.01;
+  let K = 0;
+  let assignedArray = []; // used later
+  let rFar = 4 * (RLO.xLim[1] - RLO.xLim[0]); // A "far" distance (check for s->infin)
+  let cnvVal = 0.001; // a number used as test for convergence.
+  let converged = false;
+
+
+  let rl = [];
+  for (let i = 0; i < RLO.n; i++) {
+    rl.push([]);
+    assignedArray.push(false);
+  }
+  for (let i = 0; i < RLO.n; i++) {
+    rl[i].push(RLO.poles[i].toVector());
+  }
+
+  /* 
+  Start with K=0 and a small increment dK.
+  At each new value of K+dK, find all of roots of the polynomial.
+  Go through each locus and find distance to roots.
+  Assign root with smallest distance to the appropriate locus.
+  Repeat for all the other loci.
+  If any of the distances from root to locus is greater than some val,
+    decrease dK by half and try again.
+  If all distances are within val/2, double dK.
+  Keep repeating until ???
+  */
+
+  K = 0;
+  let iterCount = 0; // Iteration count
+  let baCount = 0; // Count the number of breakawy points that we have traversed.
+  while (!converged) {
+    let oldK = K;
+    K = K + dK;
+    if (K > RLO.kBreakOut[baCount]) {
+      K = RLO.kBreakOut[baCount++]
+    }
+    let ce = RLO.den.add(RLO.num.multiply(K));
+    let r = roundToPrec(nerdamer.roots(ce), RLO.n);
+    for (let i = 0; i < r.length; i++) {
+      r[i] = r[i].toVector();
+    }
+    let aA = [...assignedArray]; // copy array
+
+    let jMin = -1;
+    let minDistPct = Infinity;
+    for (let i = 0; i < RLO.n; i++) { // for each of the root loci (rl[i]).
+      let minDist = Infinity;
+      for (let j = 0; j < RLO.n; j++) { // go through all roots (r[j]), pick closest one
+        let dist = calcDist(rl[i][rl[i].length - 1], r[j]); // calculate this distance
+        // if this root is not yet assigned (!aA[j]), and the distance is less than previous
+        if (!aA[j] && (dist < minDist)) { // if this is smallest distance, and locus is unused
+          jMin = j; // save index and distance.
+          minDist = dist;
+          let rDist = calcMag(r[j]); // root magnitude (use in next line to avoid div by 0)
+          let distPct = dist / (rDist < 0.0001 ? 0.0001 : rDist);
+          minDistPct = (distPct < minDistPct ? distPct : minDistPct);
+        }
+      }
+      rl[i].push(r[jMin]); // add this root to locus
+      aA[jMin] = true; // mark this root as being used
+    }
+
+    if (minDistPct < cnvVal) { // Adapt step size.
+      dK *= 2;
+    } else {
+      dK = (dK < 0.01) ? 0.01 : dK / 2;
+    }
+
+    if (RLO.KCross == -1) { // If we haven't found imaginary axis crossing,
+      for (let i = 0; i < RLO.n; i++) { // Check each locus
+        let s1 = rl[i][rl[i].length - 2]; // location of previous root (oldK)
+        let s2 = rl[i][rl[i].length - 1]; // current root (K);
+        if (s1[0] * s2[0] <= 0) { // See if we've crossed imag axis since last point
+          // let convVal = Math.pow(10, -(RLO.prec-1)); // A small number to text for convergence
+          if (s1[1] > cnvVal) { // see if we are off real axis
+            if ((s1[0] == 0) && (s2[0] == 0)) {
+              RLO.KCross = -2;
+            } else {
+              let KNew = (oldK * s2[0] - K * s1[0]) / (s2[0] - s1[0]); // interpolate
+              let wNew = (s1[1] * s2[0] - s2[1] * s1[0]) / (s2[0] - s1[0]); // interpolate
+              RLO.KCross = parseFloat(KNew.toPrecision(RLO.prec)); // K value at cross
+              RLO.wCross = parseFloat(wNew.toPrecision(RLO.prec)); // w value at cross
+              break;
+            }
+          }
+        }
+      }
+    }
+
+
+    // if (RLO.KCross < 0) { // If we haven't found imaginary axis crossing,
+    //   for (let i = 0; i < RLO.n; i++) { // Check each locus
+    //     let s1 = rl[i][rl[i].length - 2]; // location of previous root (oldK)
+    //     let s2 = rl[i][rl[i].length - 1]; // current root (K);
+    //     if (s1[0] * s2[0] <= 0) { // See if we've crossed imag axis since last point
+    //       // let convVal = Math.pow(10, -(RLO.prec-1)); // A small number to text for convergence
+    //       if (s1[1] > cnvVal) { // see if we are off real axis
+    //         // if so, iterate to find more exact crossing.
+    //         let K1 = oldK;
+    //         let K2 = K;
+    //         let iterVal = 0;
+    //         let done = false;
+    //         while (!done) {
+    //           var Knew = (K1 * s2[0] - K2 * s1[0]) / (s2[0] - s1[0]); // interpolate
+
+    //           let ceNew = RLO.den.add(RLO.num.multiply(Knew)); // Find new c.e.
+    //           let rNew = roundToPrec(nerdamer.roots(ceNew), RLO.n); // and roots.
+    //           let sDistMin = Infinity;
+    //           for (let j = 0; j < RLO.n; j++) { // find closest root (i.e., this locus)
+    //             let rVec = rNew[j].toVector();
+    //             var sDist = calcDist(rVec, s2);
+    //             if (sDist < sDistMin) {
+    //               sDistMin = sDist;
+    //               var sNew = rVec;
+    //             }
+    //           }
+    //           // see which value of K has roots closer to axis.
+    //           if (Math.abs(Knew - K1) > Math.abs(Knew - K2)) {
+    //             K1 = Knew;
+    //             s1 = sNew;
+    //           } else {
+    //             K2 = Knew;
+    //             s2 = sNew;
+    //           }
+    //           done = (Math.abs(K1 - K2) < cnvVal) || (iterVal++ > 20);
+    //         }
+    //         RLO.KCross = parseFloat(Knew.toPrecision(RLO.prec)); // K value at cross
+    //         RLO.wCross = parseFloat(sNew[1].toPrecision(RLO.prec)); // w value
+    //       }
+    //     }
+    //   }
+    // }
+
+    // Check to see if K is large enough to stop calculating.
+    let nRootsCnv = 0; // a count of the number of roots that have converged.
+    for (let i = 0; i < RLO.n; i++) {
+      if (calcMag(r[i]) > rFar) { // if the root is far from origin, assume it has gone to infinity
+        nRootsCnv++;
+      } else {
+        for (let j = 0; j < RLO.m; j++) { // See if it is near a zero 
+          if (calcDist(r[i], RLO.zeros[j].toVector()) < cnvVal) {
+            nRootsCnv++;
+          }
+        }
+      }
+    }
+    if (nRootsCnv >= RLO.n) { // if all roots are either at open loop zeros or |s|->infin
+      converged = true;
+    }
+    if (iterCount++ > 50000) { // if too many iterations, give up.
+      converged = true;
+    }
+  }
+  RLO.KMax = K;
+
+  for (let i = 0; i < RLO.n; i++) {
+    RLO.RLchart.addSeries({
+      name: 'Locus' + i,
+      id: 'Locus' + i,
+      type: 'scatter',
+      data: rl[i],
+      color: RLO.colors[i],
+      lineWidth: 2
+    });
+  }
+}
+
+// These next three functions link the K Value Slider and text box.
+// They depend on the fact that the slider goes from 0 to 101.
+function kSliderChange() {
+  kSliderInput();
+  kValExplain(RLO.K);
+}
+
+function kSliderInput() {
+  let i = $('#kValSlider').val();
+  if (i == 101) {
+    RLO.K = Infinity;
+  } else {
+    RLO.K = ((RLO.KMax / 10) * Math.pow(i / 100.0, 3)).toPrecision(3);
+  }
+  $('#kValTextBox').val(RLO.K);
+}
+
+function kValTextChange() {
+  let k = $('#kValTextBox').val();
+  if (k <= RLO.KMax) {
+    $('#kValSlider').val(Math.pow(k / (RLO.KMax / 10), 1 / 3) * 100);
+  } else {
+    k = Infinity;
+    $('#kValSlider').val(101);
+  }
+  RLO.K = k;
+  $('#kValTextBox').val(RLO.K);
+  kValExplain(k);
+}
+
+function calcDist(x, y) {
+  return Math.sqrt((x[0] - y[0]) * (x[0] - y[0]) + (x[1] - y[1]) * (x[1] - y[1]));
+}
+
+function calcMag(x) {
+  return Math.sqrt(x[0] * x[0] + x[1] * x[1]);
+}
+
+function makeRLchart(myId) {
+  //Make cross symbol for poles.
+  Highcharts.SVGRenderer.prototype.symbols.cross = function (x, y, w, h) {
+    return ['M', x, y, 'L', x + w, y + h, 'M', x + w, y, 'L', x, y + h, 'z'];
+  };
+  if (Highcharts.VMLRenderer) {
+    Highcharts.VMLRenderer.prototype.symbols.cross = Highcharts.SVGRenderer.prototype.symbols.cross;
+  };
+  let pzMax = 10;
+  var myChart = Highcharts.chart(myId, {
+    legend: {
+      enabled: false
+    },
+    tooltip: {
+      enabled: false
+    },
+    credits: {
+      enabled: false
+    },
+    chart: {
+      backgroundColor: 'transparent',
+      plotBorderColor: 'gray',
+      plotBorderWidth: 1,
+      animation: false,
+      height: 500,
+      width: 500
+    },
+    title: {
+      text: 'Root Locus'
+    },
+    plotOptions: {
+      series: {
+        type: 'scatter',
+        marker: {
+          enabled: false
+        },
+        states: {
+          inactive: {
+            opacity: 1
+          },
+          hover: {
+            enabled: false
+          }
+        }
+      }
+    },
+    xAxis: {
+      title: {
+        useHTML: true,
+        text: '&sigma; (real part of s)'
+      },
+      gridLineWidth: 1,
+      tickInterval: 1
+    },
+    yAxis: {
+      title: {
+        useHTML: true,
+        text: 'j&omega; (imag part of s)'
+      },
+      opposite: true,
+      tickInterval: 1
+    },
+    series: [{
+        name: 'poles',
+        id: 'poles',
+
+        data: [
+          [0, 0] //placeholder 
+        ],
+        marker: {
+          enabled: true,
+          symbol: 'cross',
+          lineColor: 'black',
+          lineWidth: 2
+        },
+        states: {
+          inactive: {
+            opacity: 1
+          }
+        },
+        lineWidth: 0
+      },
+      {
+        name: 'zeros',
+        id: 'zeros',
+        data: [
+          [0, 0] //placeholder
+        ],
+        marker: {
+          enabled: true,
+          symbol: 'circle',
+          lineColor: 'black',
+          fillColor: 'none',
+          lineWidth: 2
+        },
+        states: {
+          inactive: {
+            opacity: 1
+          }
+        },
+        lineWidth: 0
+      },
+      {
+        name: 'xAxis',
+        id: 'xAxis',
+        data: [
+          [0, 0] // placeholder
+        ],
+        lineColor: 'grey',
+        lineWidth: 1,
+        dashStyle: 'Dash',
+        marker: {
+          enabled: false,
+        },
+        states: {
+          inactive: {
+            opacity: 1
+          }
+        }
+      },
+      {
+        name: 'yAxis',
+        id: 'yAxis',
+        data: [
+          [0, 0] // placeholder
+        ],
+        lineColor: 'grey',
+        lineWidth: 1,
+        dashStyle: 'Dash',
+        marker: {
+          enabled: false
+        },
+        states: {
+          inactive: {
+            opacity: 1
+          }
+        }
+      },
+      {
+        name: 'showRoots',
+        id: 'showRoots',
+        type: 'scatter', // not sure why I need this, highcharts complains without it
+        data: [
+          [0, 0] // placeholder
+        ],
+        marker: {
+          enabled: true,
+          symbol: 'diamond',
+          lineColor: RLO.pink,
+          fillColor: RLO.pink,
+          radius: 10
+        }
+      },
+      {
+        name: 'showPoint',
+        id: 'showPoint',
+        type: 'scatter', // not sure why I need this, highcharts complains without it
+        data: [
+          [0, 0] // placeholder
+        ],
+        marker: {
+          enabled: true,
+          symbol: 'cross',
+          lineColor: 'green',
+          lineWidth: 3,
+          radius: 4
+        }
+      }
+    ]
+  });
+  return myChart;
+};
+
+
+function termsStr(x) { // print out all values in complex array x.
+  let s = '';
+  for (let i = 0; i < x.length; i++) {
+    s = s + dispRoot(x[i]);
+    if (x[i].im != 0) {
+      i = i + 1; // Skip over complex conjugate root.
+    }
+    if (i < x.length - 2) {
+      s = s + ', ';
+    } else {
+      if (i == x.length - 2) {
+        s = s + ' and ';
+      }
+    }
+  }
+  return (s);
+}
+
+function dispRoot(x) { // display commplex number with +/- to indicate conjugate.
+  return x.im == 0 ? x.re : x.re + (x.im == 0 ? '' : ' &plusmn; ') + Math.abs(x.im) + '<em>j</em>';
+}
+
+// Round all roots to "prec" to make checks for equality possible.
+// Also check to see if number is sufficiently close to zero, and if so, set to zero.
+// n = digits of precision, r=nedamer object with roots, returns array of complex
+function roundToPrec(r, n) {
+  let rArray = [];
+  for (let i = 0; i < n; i++) {
+    let rl = nerdamer.realpart(nerdamer.vecget(r, i)).valueOf().toPrecision(RLO.prec);
+    rl = Math.abs(rl) < 1e-3 ? 0 : rl;
+    let im = nerdamer.imagpart(nerdamer.vecget(r, i)).valueOf().toPrecision(RLO.prec);
+    im = Math.abs(im) < 1e-3 ? 0 : im;
+    rArray.push(new Complex(parseFloat(rl), parseFloat(im)));
+  }
+  return (rArray);
+}
