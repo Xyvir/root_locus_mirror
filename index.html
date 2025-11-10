@@ -301,56 +301,68 @@
           <h2>Select rule to be explained</h2>
           <p>(The explanation of the rule applied to this loop gain is below the graph.)</p>
           <br>
-          <div style="text-align:left; margin-left:3em">
-            <label> <input type="radio" name="explainRadio" id="onlyLocus" value="onlyLocusDiv" checked="checked">
-              Show only the locus</label><br>
-            <label>
-              <input type="radio" name="explainRadio" value="startPtDiv">
-              Starting point(s) of locus (K→0)</label>
-            <br>
-            <label>
-              <input type="radio" name="explainRadio" value="stopPtDiv">
-              Stopping point(s) of locus (K→∞)</label>
-            <br>
-            <label>
-              <input type="radio" name="explainRadio" value="realAxisDiv">
-              Locus on Real Axis</label>
-            <br>
-            <label>
-              <input type="radio" name="explainRadio" value="asymptotesDiv">
-              Asymptotes as
-              |s|→∞</label>
-            <br>
-            <label>
-              <input type="radio" name="explainRadio" value="breakOutDiv">
-              Break-Out (and In)
-              locations</label>
-            <br>
-            <label>
-              <input type="radio" name="explainRadio" value="departAngleDiv">
-              Angle of Departure</label>
-            from complex poles<br>
-            <label>
-              <input type="radio" name="explainRadio" value="arriveAngleDiv">
-              Angle of Arrival</label>
-            to complex zeros<br>
-            <label>
-              <input type="radio" name="explainRadio" value="crossImagAxisDiv">
-              Locus Crosses Imaginary
-              Axis</label>
-            <br>
+    <div style="text-align:left; margin-left:3em">
+        <!-- Step 1c -->
+        <label>
+            <input type="radio" name="explainRadio" id="startPtRadio" value="startPtDiv" checked="checked">
+            (Step 1c) Starting point(s) of locus (K→0)</label>
+        <br>
+        <!-- Step 1c & 3 -->
+        <label>
+            <input type="radio" name="explainRadio" value="stopPtDiv">
+            (Steps 1c & 3) Stopping point(s) of locus (K→∞)</label>
+        <br>
+        <!-- Step 2 -->
+        <label>
+            <input type="radio" name="explainRadio" value="realAxisDiv">
+            (Step 2) Locus on Real Axis</label>
+        <br>
+        <!-- Step 3 -->
+        <label>
+            <input type="radio" name="explainRadio" value="asymptotesDiv">
+            (Step 3) Asymptotes as
+            |s|→∞</label>
+        <br>
+        <!-- Step 4 -->
+        <label>
+            <input type="radio" name="explainRadio" value="crossImagAxisDiv">
+            (Step 4) Locus Crosses Imaginary
+            Axis</label>
+        <br>
+        <!-- Step 5 -->
+        <label>
+            <input type="radio" name="explainRadio" value="breakOutDiv">
+            (Step 5) Break-Out (and In)
+            locations</label>
+        <br>
+        <!-- Step 6 -->
+        <label>
+            <input type="radio" name="explainRadio" value="departAngleDiv">
+            (Step 6) Angle of Departure from complex poles</label>
+        <br>
+        <!-- Step 6 -->
+        <label>
+            <input type="radio" name="explainRadio" value="arriveAngleDiv">
+            (Step 6) Angle of Arrival to complex zeros</label>
+        <br>
+        <!-- Step 7 -->
+        <label> <input type="radio" name="explainRadio" id="onlyLocus" value="onlyLocusDiv">
+            (Step 7) Show only the locus</label><br>
+        <br>
+        <!-- Application -->
+        <label>
+            <input type="radio" name="explainRadio" value="chooseKDiv">
+            (Application) Set K (slider is below), and show pole locations.</label>
+        <br>
+        <!-- Application -->
+        <label>
+            <input type="radio" name="explainRadio" value="getKfromPoleDiv">
+            (Application) Get K from Pole
+            Location</label>
+        <br>
+    </div>
 
-            <label>
-              <input type="radio" name="explainRadio" value="chooseKDiv">
-              Set K (slider is below), and show pole locations.</label>
-            <br>
-
-            <label>
-              <input type="radio" name="explainRadio" value="getKfromPoleDiv">
-              Get K from Pole
-              Location</label>
-            <br>
-          </div>
+			
           <br>
           <div style="text-align:left; margin-left:3em; float:left;">
             <label>
